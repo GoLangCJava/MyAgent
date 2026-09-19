@@ -65,11 +65,11 @@ def create_deep_agent_for_run(agent_slug: str, system_prompt: str|None=None, mod
     }
     try:
         from deepagents import create_deep_agent
-        from deepagents.backends import StateBackend
+        from deepagents.backends import FilesystemBackend
         backend_dir=os.path.join(settings.WORKSPACE_BASE, thread_id or "default")
         os.makedirs(backend_dir, exist_ok=True)
         try:
-            backend=StateBackend(root_dir=backend_dir)
+            backend=FilesystemBackend(root_dir=backend_dir)
         except Exception:
             backend=None
         kwargs=dict(
