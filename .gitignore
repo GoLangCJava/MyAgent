@@ -14,10 +14,11 @@ venv/
 node_modules/
 dist/
 
-# workspaces / data
+# workspaces / data / logs
 workspaces/
 pgdata/
 redisdata/
+logs/
 
 # os / ide
 .DS_Store

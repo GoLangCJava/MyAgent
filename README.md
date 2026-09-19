@@ -2,22 +2,39 @@
 
 基于 Yuxi 架构 + deepagents 内核的高并发智能体平台，含完整前后端。
 
-## 快速启动
+## 快速启动 (本地脚本, 不用 docker)
+
+前置: 本机装好 Python 3.10+、Node 18+，并启动 Postgres(5432) / Redis(6379)。
 
 ```bash
-# 1. 配置模型 (SiliconFlow, OpenAI 兼容)
-cp .env.template .env
-# 编辑 .env, 填入你的 Key:
+# 1. 一键准备环境 (建 venv、装依赖、生成 .env、检查 PG/Redis)
+./scripts/setup.sh
+
+# 2. 编辑 .env, 填入你的 Key:
 #   SILICONFLOW_API_KEY=sk-xxx
 #   SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1
 #   DEFAULT_MODEL=siliconflow:Qwen/Qwen2.5-7B-Instruct
 
-# 2. 启动
-docker compose up --build -d
-curl http://localhost:8000/api/system/ready
+# 3. 一键启动 api + worker + web (后台运行)
+./scripts/start.sh
+
 # 前端 http://localhost:5173  账号 admin / admin123
 # 后端 docs http://localhost:8000/docs
+curl http://localhost:8000/api/system/ready
 ```
+
+常用脚本:
+
+| 脚本 | 说明 |
+|---|---|
+| `./scripts/setup.sh` | 初始化环境, 只需跑一次 |
+| `./scripts/start.sh [all\|api\|worker\|web]` | 后台启动服务, 日志在 `logs/` |
+| `./scripts/stop.sh [all\|api\|worker\|web]` | 停止服务 |
+| `./scripts/status.sh` | 查看运行状态 + api 健康检查 |
+| `./scripts/start-api.sh` / `start-worker.sh` / `start-web.sh` | 前台单独启动, 调试用 |
+| `WORKERS=2 ./scripts/start.sh worker` | 启动 2 个 worker |
+
+> `docker-compose.yml` 仍保留, 想用 docker 时 `docker compose up --build -d` 即可。
 
 ## 模型配置说明
 
