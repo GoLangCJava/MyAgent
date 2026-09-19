@@ -26,6 +26,7 @@ fi
 if ! .venv/bin/pip install -r backend/requirements.txt; then
   echo ""
   echo "依赖安装失败, 常见原因与解决:"
+  echo "- 请把上方 ERROR: 开头的完整报错贴出来, 以便定位是哪个包"
   echo "- 如报 pg_config 缺失 / 需要编译: macOS 请先 xcode-select --install, 或 brew install postgresql"
   echo "- 如仍失败, 可换 Python 3.11/3.12 重建环境: rm -rf .venv && python3.12 -m venv .venv && ./scripts/setup.sh"
   exit 1
