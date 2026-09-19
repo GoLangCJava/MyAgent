@@ -1,0 +1,25 @@
+# env (contains secrets, never commit)
+.env
+.env.local
+*.local
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# node
+node_modules/
+dist/
+
+# workspaces / data
+workspaces/
+pgdata/
+redisdata/
+
+# os / ide
+.DS_Store
+.vscode/*
+!.vscode/extensions.json

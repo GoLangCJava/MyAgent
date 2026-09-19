@@ -32,6 +32,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     command: uvicorn server.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/server --reload-dir /app/package
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/deep_platform
       SYNC_DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/deep_platform
@@ -39,8 +41,13 @@ services:
       JWT_SECRET: dev-super-secret-jwt-key-change-in-prod
       JWT_ALGORITHM: HS256
       ARQ_MAX_JOBS: 10
-      DEFAULT_MODEL: openai:gpt-4o-mini
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-siliconflow:Qwen/Qwen2.5-7B-Instruct}
       WORKSPACE_BASE: /app/workspaces
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+      SILICONFLOW_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
     ports:
       - "8000:8000"
     depends_on:
@@ -57,16 +64,21 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     command: python -m server.worker_main
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/deep_platform
       SYNC_DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/deep_platform
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET: dev-super-secret-jwt-key-change-in-prod
       ARQ_MAX_JOBS: 10
-      DEFAULT_MODEL: openai:gpt-4o-mini
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-siliconflow:Qwen/Qwen2.5-7B-Instruct}
       WORKSPACE_BASE: /app/workspaces
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+      SILICONFLOW_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
     depends_on:
       postgres:
         condition: service_healthy

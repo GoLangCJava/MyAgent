@@ -43,6 +43,29 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Seed agents failed {e}")
 
+    # seed siliconflow provider from env (so /models/specs shows Qwen)
+    try:
+        import os
+        from deep_platform.storage.postgres.models import ModelProvider
+        from deep_platform.config import settings
+        async with SessionLocal() as db:
+            q=await db.execute(select(ModelProvider).where(ModelProvider.name=="siliconflow-default"))
+            if not q.scalars().first():
+                default_model = settings.DEFAULT_MODEL or "siliconflow:Qwen/Qwen2.5-7B-Instruct"
+                _, _, model_name = default_model.partition(":")
+                prov=ModelProvider(
+                    name="siliconflow-default",
+                    provider="siliconflow",
+                    api_key=settings.SILICONFLOW_API_KEY or "",
+                    base_url=settings.SILICONFLOW_BASE_URL or "https://api.siliconflow.cn/v1",
+                    models_json={"models":[model_name or "Qwen/Qwen2.5-7B-Instruct"]},
+                )
+                db.add(prov)
+                await db.commit()
+                print("SiliconFlow provider seeded")
+    except Exception as e:
+        print(f"Seed model provider failed {e}")
+
     yield
     print("=== Lifespan shutdown ===")
     from deep_platform.services.run_queue_service import close_queue_clients

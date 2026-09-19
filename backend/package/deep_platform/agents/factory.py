@@ -2,20 +2,42 @@ import os
 from deep_platform.config import settings
 from deep_platform.agents.tools.builtin import ALL_TOOLS
 
-def get_model(model_spec: str|None=None):
-    spec=model_spec or settings.DEFAULT_MODEL
-    provider, _, model_name = spec.partition(":")
-    model_name=model_name or "gpt-4o-mini"
+# 兼容 SiliconFlow / Qwen / OpenAI 的 provider 别名, 全部走 OpenAI 兼容接口
+OPENAI_COMPATIBLE_PROVIDERS = {"openai", "", "siliconflow", "silicon", "qwen", "deepseek", "moonshot", "zhipu", "yi"}
+
+
+def _split_spec(spec: str) -> tuple[str, str]:
+    """解析 'provider:model'。无冒号时视为纯模型名, provider 取 DEFAULT_MODEL 的 provider。"""
+    spec = (spec or "").strip()
+    if ":" in spec:
+        provider, _, model_name = spec.partition(":")
+        return provider.strip().lower(), model_name.strip()
+    # 纯模型名, e.g. "Qwen/Qwen2.5-7B-Instruct"
+    default_provider, _, _ = (settings.DEFAULT_MODEL or "").partition(":")
+    return (default_provider.strip().lower() or "siliconflow"), spec
+
+
+def get_model(model_spec: str | None = None):
+    spec = model_spec or settings.DEFAULT_MODEL
+    provider, model_name = _split_spec(spec)
+    model_name = model_name or "Qwen/Qwen2.5-7B-Instruct"
     try:
-        if provider in ("openai",""):
-            from langchain_openai import ChatOpenAI
-            return ChatOpenAI(model=model_name, streaming=True, temperature=0.7)
-        elif provider=="anthropic":
+        if provider == "anthropic":
             from langchain_anthropic import ChatAnthropic
-            return ChatAnthropic(model=model_name, streaming=True)
-        else:
-            from langchain_openai import ChatOpenAI
-            return ChatOpenAI(model="gpt-4o-mini", streaming=True)
+            api_key, _ = settings.resolve_provider_config(provider)
+            kwargs = dict(model=model_name, streaming=True)
+            if api_key:
+                kwargs["api_key"] = api_key
+            return ChatAnthropic(**kwargs)
+        # OpenAI 兼容接口 (openai / siliconflow / qwen / deepseek ...)
+        from langchain_openai import ChatOpenAI
+        api_key, base_url = settings.resolve_provider_config(provider)
+        kwargs = dict(model=model_name, streaming=True, temperature=0.7)
+        if api_key:
+            kwargs["api_key"] = api_key
+        if base_url:
+            kwargs["base_url"] = base_url
+        return ChatOpenAI(**kwargs)
     except Exception as e:
         print(f"Model init failed {e}, fallback mock")
         from langchain_core.language_models.fake_chat_models import FakeListChatModel

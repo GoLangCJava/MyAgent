@@ -50,7 +50,10 @@ async def list_model_specs(current_user: User = Depends(get_current_user), db: A
         models=p.models_json.get("models",[]) if p.models_json else []
         for m in models:
             specs.append(f"{p.provider}:{m}")
-    # fallback
+    # fallback: 优先 SiliconFlow Qwen
     if not specs:
-        specs=["openai:gpt-4o-mini","openai:gpt-4o","anthropic:claude-3-5-sonnet-20241022"]
+        from deep_platform.config import settings
+        specs=[settings.DEFAULT_MODEL, "siliconflow:Qwen/Qwen2.5-7B-Instruct", "openai:gpt-4o-mini","openai:gpt-4o","anthropic:claude-3-5-sonnet-20241022"]
+        # 去重保序
+        specs=list(dict.fromkeys(specs))
     return {"specs":specs}

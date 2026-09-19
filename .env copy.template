@@ -1,7 +1,15 @@
+# ---- LLM 模型配置 (SiliconFlow, OpenAI 兼容接口) ----
+SILICONFLOW_API_KEY=sk-...
+SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1
+DEFAULT_MODEL=siliconflow:Qwen/Qwen2.5-7B-Instruct
+
+# 其他可选提供商
 OPENAI_API_KEY=sk-...
+OPENAI_BASE_URL=
 ANTHROPIC_API_KEY=sk-ant-...
+
+# ---- 基础设施 ----
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/deep_platform
 REDIS_URL=redis://localhost:6379/0
 JWT_SECRET=change-me-in-prod-super-secret
-DEFAULT_MODEL=openai:gpt-4o-mini
 ARQ_MAX_JOBS=10

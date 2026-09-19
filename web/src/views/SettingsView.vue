@@ -27,8 +27,9 @@
         <h4>添加提供商</h4>
         <a-form layout="inline" :model="form" @finish="onAdd">
           <a-form-item><a-input v-model:value="form.name" placeholder="名称" /></a-form-item>
-          <a-form-item><a-select v-model:value="form.provider" :options="[{label:'openai',value:'openai'},{label:'anthropic',value:'anthropic'}]" style="width:120px" /></a-form-item>
+          <a-form-item><a-select v-model:value="form.provider" :options="[{label:'siliconflow',value:'siliconflow'},{label:'openai',value:'openai'},{label:'anthropic',value:'anthropic'}]" style="width:130px" /></a-form-item>
           <a-form-item><a-input v-model:value="form.api_key" placeholder="API Key" style="width:200px" /></a-form-item>
+          <a-form-item><a-input v-model:value="form.base_url" placeholder="Base URL (选填)" style="width:220px" /></a-form-item>
           <a-form-item><a-button type="primary" html-type="submit">添加</a-button></a-form-item>
         </a-form>
       </div>
@@ -50,7 +51,7 @@ const specs = ref([])
 const stats = ref({})
 const readyInfo = ref({})
 const loading = ref(false)
-const form = reactive({ name:'', provider:'openai', api_key:'', base_url:'', models_json:{models:['gpt-4o-mini','gpt-4o']} })
+const form = reactive({ name:'', provider:'siliconflow', api_key:'', base_url:'https://api.siliconflow.cn/v1', models_json:{models:['Qwen/Qwen2.5-7B-Instruct']} })
 
 onMounted(async () => {
   await fetchProviders()
