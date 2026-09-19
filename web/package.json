@@ -1,0 +1,25 @@
+{
+  "name": "deep-platform-web",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5173",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vue": "^3.4.21",
+    "vue-router": "^4.3.0",
+    "pinia": "^2.1.7",
+    "ant-design-vue": "^4.1.2",
+    "axios": "^1.6.8",
+    "@ant-design/icons-vue": "^7.0.1",
+    "dayjs": "^1.11.10",
+    "markdown-it": "^14.1.0",
+    "highlight.js": "^11.9.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.4",
+    "vite": "^5.2.8"
+  }
+}

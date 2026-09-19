@@ -1,0 +1,170 @@
+import asyncio, uuid, os
+from datetime import datetime, timezone
+from arq import func
+from deep_platform.storage.postgres.manager import SessionLocal
+from deep_platform.storage.postgres.models import AgentRun, Message, AgentRunRequest, Conversation
+from deep_platform.services.agent_request_queue_service import try_acquire_run_lease, renew_run_lease, dispatch_ready_head
+from deep_platform.services.run_queue_service import append_run_event, wait_for_cancel_signal, clear_cancel_signal
+from deep_platform.services.agent_run_service import complete_run
+from deep_platform.agents.factory import create_deep_agent_for_run
+from deep_platform.storage.redis import get_arq_redis_settings
+from sqlalchemy import select
+
+WORKER_ID=f"worker-{uuid.uuid4().hex[:8]}"
+HEARTBEAT=30
+
+async def run_agent(ctx, run_id: str):
+    print(f"[{WORKER_ID}] run {run_id} start")
+    async with SessionLocal() as db:
+        ok=await try_acquire_run_lease(db, run_id, WORKER_ID)
+        if not ok:
+            print(f"[{WORKER_ID}] lease not acquired {run_id}")
+            return
+
+    # 加载上下文
+    async with SessionLocal() as db:
+        q=await db.execute(select(AgentRun).where(AgentRun.id==run_id))
+        run=q.scalars().first()
+        if not run: return
+        uid, agent_slug, thread_id, request_id, conv_id = run.uid, run.agent_slug, run.thread_id, run.request_id, run.conversation_id
+        q2=await db.execute(select(Message).where(Message.request_id==request_id, Message.role=="user"))
+        umsg=q2.scalars().first()
+        query=umsg.content if umsg else "Hello"
+        q3=await db.execute(select(AgentRunRequest).where(AgentRunRequest.request_id==request_id))
+        req=q3.scalars().first()
+        model_spec=req.input_payload.get("model_spec") if req and req.input_payload else None
+        q4=await db.execute(select(Conversation).where(Conversation.id==conv_id))
+        conv=q4.scalars().first()
+        system_prompt=conv.extra_metadata.get("system_prompt") if conv and conv.extra_metadata else None
+        if not system_prompt:
+            from deep_platform.storage.postgres.models import Agent
+            q5=await db.execute(select(Agent).where(Agent.slug==agent_slug))
+            ag=q5.scalars().first()
+            system_prompt=ag.system_prompt if ag else None
+
+    cancel_event=asyncio.Event()
+    async def watch_cancel():
+        await wait_for_cancel_signal(run_id, 0.2)
+        cancel_event.set()
+    async def heartbeat():
+        while not cancel_event.is_set():
+            await asyncio.sleep(HEARTBEAT)
+            async with SessionLocal() as db:
+                renewed=await renew_run_lease(db, run_id, WORKER_ID)
+                if not renewed:
+                    cancel_event.set()
+                    return
+    ct=asyncio.create_task(watch_cancel())
+    ht=asyncio.create_task(heartbeat())
+
+    try:
+        await append_run_event(run_id, "run_started", {"run_id":run_id, "thread_id":thread_id}, thread_id)
+
+        agent=create_deep_agent_for_run(agent_slug, system_prompt=system_prompt, model_spec=model_spec, thread_id=thread_id)
+
+        output_text=""
+        # 兼容 deepagents 和 langchain agent 的流式
+        try:
+            async for event in agent.astream({"messages":[{"role":"user","content":query}]}, stream_mode=["messages","updates"]):
+                if cancel_event.is_set():
+                    await append_run_event(run_id, "run_cancelled", {"reason":"user_cancel"}, thread_id)
+                    async with SessionLocal() as db:
+                        q=await db.execute(select(AgentRun).where(AgentRun.id==run_id).with_for_update())
+                        r=q.scalars().first()
+                        if r:
+                            r.status="cancelled"
+                            r.finished_at=datetime.now(timezone.utc).replace(tzinfo=None)
+                            r.lease_expires_at=None
+                            await db.commit()
+                    return
+
+                try:
+                    if isinstance(event, (list,tuple)) and len(event)==2:
+                        mode,data=event
+                    else:
+                        mode,data="messages",event
+
+                    if mode=="messages":
+                        # data is (chunk, metadata)
+                        chunk=data[0] if isinstance(data,(list,tuple)) else data
+                        content=getattr(chunk,"content",None)
+                        if content is None and isinstance(chunk, dict):
+                            content=chunk.get("content")
+                        if content:
+                            # content可能是list
+                            if isinstance(content, list):
+                                txt="".join([c.get("text","") if isinstance(c,dict) else str(c) for c in content])
+                            else:
+                                txt=str(content)
+                            if txt:
+                                output_text+=txt
+                                await append_run_event(run_id, "message_delta", {"delta":txt}, thread_id)
+                    elif mode=="updates":
+                        # 工具调用等
+                        await append_run_event(run_id, "step_update", {"update":str(data)[:2000]}, thread_id)
+                except Exception as e:
+                    print(f"event parse error {e}")
+
+        except Exception as e:
+            # fallback: invoke
+            print(f"astream failed {e}, fallback invoke")
+            try:
+                result=await agent.ainvoke({"messages":[{"role":"user","content":query}]})
+                msgs=result.get("messages",[]) if isinstance(result, dict) else []
+                if msgs:
+                    last=msgs[-1]
+                    txt=getattr(last,"content","") or (last.get("content") if isinstance(last,dict) else str(last))
+                    if isinstance(txt, list):
+                        txt="".join([c.get("text","") if isinstance(c,dict) else str(c) for c in txt])
+                    output_text=str(txt)
+                    await append_run_event(run_id, "message_delta", {"delta":output_text}, thread_id)
+                else:
+                    output_text=str(result)
+                    await append_run_event(run_id, "message_delta", {"delta":output_text}, thread_id)
+            except Exception as e2:
+                print(f"invoke also failed {e2}")
+                raise e
+
+        # 保存 assistant消息
+        async with SessionLocal() as db:
+            out_id=str(uuid.uuid4())
+            out_msg=Message(id=out_id, conversation_id=conv_id, thread_id=thread_id, run_id=run_id, request_id=request_id, role="assistant", content=output_text or "[No output]", delivery_status="dispatched", extra_metadata={"run_id":run_id})
+            db.add(out_msg)
+            await db.flush()
+            await complete_run(db, run_id, output_message_id=out_id)
+            await append_run_event(run_id, "run_completed", {"run_id":run_id, "output_message_id":out_id}, thread_id)
+
+        # 链式派发下一请求
+        async with SessionLocal() as db:
+            dispatched=await dispatch_ready_head(db, uid=uid, agent_slug=agent_slug, thread_id=thread_id)
+            await db.commit()
+            if dispatched:
+                from deep_platform.services.agent_run_service import enqueue_agent_run
+                await enqueue_agent_run(dispatched.id)
+
+    except Exception as e:
+        print(f"[{WORKER_ID}] run {run_id} failed {e}")
+        import traceback; traceback.print_exc()
+        async with SessionLocal() as db:
+            await complete_run(db, run_id, error={"message":str(e)})
+            await append_run_event(run_id, "run_failed", {"error":str(e)}, thread_id)
+    finally:
+        ct.cancel(); ht.cancel()
+        try: await asyncio.gather(ct, ht, return_exceptions=True)
+        except: pass
+        await clear_cancel_signal(run_id)
+
+class WorkerSettings:
+    functions=[func(run_agent, name="run_agent", max_tries=1)]
+    redis_settings=get_arq_redis_settings()
+    max_jobs=int(os.getenv("ARQ_MAX_JOBS","10"))
+    job_timeout=3600
+    async def startup(self, ctx):
+        print(f"Worker {WORKER_ID} startup max_jobs={self.max_jobs}")
+        async with SessionLocal() as db:
+            from deep_platform.services.agent_request_queue_service import recover_pending_dispatches, fail_expired_leases
+            await fail_expired_leases(db)
+            cnt=await recover_pending_dispatches(db)
+            print(f"Recovered {cnt} pending")
+    async def shutdown(self, ctx):
+        print(f"Worker {WORKER_ID} shutdown")

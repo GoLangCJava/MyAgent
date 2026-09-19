@@ -1,0 +1,97 @@
+version: "3.9"
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: deep_platform
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: uvicorn server.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/server --reload-dir /app/package
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/deep_platform
+      SYNC_DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/deep_platform
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: dev-super-secret-jwt-key-change-in-prod
+      JWT_ALGORITHM: HS256
+      ARQ_MAX_JOBS: 10
+      DEFAULT_MODEL: openai:gpt-4o-mini
+      WORKSPACE_BASE: /app/workspaces
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - workspaces:/app/workspaces
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: python -m server.worker_main
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/deep_platform
+      SYNC_DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/deep_platform
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: dev-super-secret-jwt-key-change-in-prod
+      ARQ_MAX_JOBS: 10
+      DEFAULT_MODEL: openai:gpt-4o-mini
+      WORKSPACE_BASE: /app/workspaces
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - workspaces:/app/workspaces
+    deploy:
+      replicas: 2
+
+  web:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -c "npm install && npm run dev"
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./web:/app
+    environment:
+      VITE_API_BASE: http://localhost:8000
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  redisdata:
+  workspaces:
