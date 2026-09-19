@@ -23,7 +23,13 @@ if [ ! -d .venv ]; then
   echo "已创建 .venv"
 fi
 .venv/bin/pip install -q --upgrade pip
-.venv/bin/pip install -r backend/requirements.txt
+if ! .venv/bin/pip install -r backend/requirements.txt; then
+  echo ""
+  echo "依赖安装失败, 常见原因与解决:"
+  echo "- 如报 pg_config 缺失 / 需要编译: macOS 请先 xcode-select --install, 或 brew install postgresql"
+  echo "- 如仍失败, 可换 Python 3.11/3.12 重建环境: rm -rf .venv && python3.12 -m venv .venv && ./scripts/setup.sh"
+  exit 1
+fi
 echo "后端依赖安装完成"
 
 echo "=== 4/5 前端依赖 ==="
