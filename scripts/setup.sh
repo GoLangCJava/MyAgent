@@ -23,7 +23,17 @@ if [ ! -d .venv ]; then
   echo "已创建 .venv"
 fi
 .venv/bin/pip install -q --upgrade pip
-if ! .venv/bin/pip install -r backend/requirements.txt; then
+PIP_OK=0
+for ATTEMPT in 1 2 3; do
+  echo "pip 安装尝试 $ATTEMPT/3 ..."
+  if .venv/bin/pip install -r backend/requirements.txt; then
+    PIP_OK=1
+    break
+  fi
+  echo "第 $ATTEMPT 次失败, 5 秒后重试..."
+  sleep 5
+done
+if [ $PIP_OK -ne 1 ]; then
   echo ""
   echo "依赖安装失败, 常见原因与解决:"
   echo "- 请把上方 ERROR: 开头的完整报错贴出来, 以便定位是哪个包"
