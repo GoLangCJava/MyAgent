@@ -46,7 +46,11 @@ start_worker() {
 start_web() {
   if is_running logs/web.pid; then echo "web 已在运行 (pid $(cat logs/web.pid)), 跳过"; return; fi
   if [ ! -d web/node_modules ]; then echo "web/node_modules 不存在, 先执行 ./scripts/setup.sh"; return 1; fi
-  (cd web && nohup npm run dev -- --port "$WEB_PORT" > ../logs/web.log 2>&1 & echo $! > ../logs/web.pid)
+  (
+    cd web || exit 1
+    nohup npm run dev -- --port "$WEB_PORT" > ../logs/web.log 2>&1 &
+    echo $! > ../logs/web.pid
+  )
   echo "web 已启动, pid $(cat logs/web.pid), 日志 logs/web.log"
 }
 
