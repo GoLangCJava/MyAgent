@@ -72,7 +72,7 @@ async def append_run_event(run_id: str, event_type: str, payload: dict, thread_i
         extra=f" preview={str(payload.get('delta',''))[:60]!r}"
     elif event_type in ("run_failed",):
         extra=f" error={str(payload.get('error',''))[:200]!r}"
-    logger.info("[stream %s] %s seq=%s%s", run_id, event_type, eid, extra)
+    # logger.info("[stream %s] %s seq=%s%s", run_id, event_type, eid, extra)
     return str(eid)
 
 async def list_run_events(run_id: str, after_seq: str="0-0", limit: int=200):
