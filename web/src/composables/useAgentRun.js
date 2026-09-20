@@ -47,9 +47,15 @@ export function useAgentRun() {
     }
   }
 
+  function sseUrl(path) {
+    // EventSource 发不出 Authorization 头, token 走 query 参数 (后端 get_current_user_sse 支持)
+    const token = localStorage.getItem('token') || ''
+    return `${path}?token=${encodeURIComponent(token)}`
+  }
+
   function startRequestStream(request_id) {
     status.value = 'queued'
-    const url = `/api/agent/requests/${request_id}/events`
+    const url = sseUrl(`/api/agent/requests/${request_id}/events`)
     requestES = new EventSource(url)
 
     requestES.addEventListener('queued', (e) => {
@@ -88,7 +94,7 @@ export function useAgentRun() {
     messages.value.push(assistantMsg)
     const idx = messages.value.length - 1
 
-    const url = `/api/agent/runs/${run_id}/events`
+    const url = sseUrl(`/api/agent/runs/${run_id}/events`)
     runES = new EventSource(url)
     let lastSeq = '0-0'
 
