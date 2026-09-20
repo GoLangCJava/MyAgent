@@ -42,6 +42,7 @@ import { ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '../../stores/user.js'
 import { PlusOutlined, MessageOutlined, HistoryOutlined, RobotOutlined, FolderOutlined, SettingOutlined } from '@ant-design/icons-vue'
+import { genUUID } from '../../utils/uuid.js'
 
 const collapsed = ref(false)
 const selectedKeys = ref(['/chat'])
@@ -58,7 +59,7 @@ function onMenuClick({ key }) {
   router.push(key)
 }
 function newChat() {
-  const tid = crypto.randomUUID()
+  const tid = genUUID()
   router.push(`/chat/${tid}`)
 }
 function logout() {

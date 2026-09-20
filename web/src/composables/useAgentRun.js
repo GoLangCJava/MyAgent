@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { createAgentRun, cancelRun as cancelRunApi } from '../apis/agent_api.js'
+import { genUUID } from '../utils/uuid.js'
 
 function authHeaders() {
   const token = localStorage.getItem('token') || ''
@@ -96,7 +97,7 @@ export function useAgentRun() {
     status.value = 'queued'
     error.value = null
 
-    const request_id = crypto.randomUUID()
+    const request_id = genUUID()
     currentRequestId.value = request_id
 
     let res

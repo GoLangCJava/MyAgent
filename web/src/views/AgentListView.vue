@@ -35,6 +35,7 @@ import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { useAgentStore } from '../stores/agent.js'
 import { createAgent, updateAgent, deleteAgent as deleteApi } from '../apis/agent_api.js'
+import { genUUID } from '../utils/uuid.js'
 
 const agentStore = useAgentStore()
 const router = useRouter()
@@ -58,7 +59,7 @@ function editAgent(agent){
 }
 function useAgent(agent){
   agentStore.setCurrentAgent(agent)
-  router.push(`/chat/${crypto.randomUUID()}`)
+  router.push(`/chat/${genUUID()}`)
 }
 async function onSave(){
   saving.value=true

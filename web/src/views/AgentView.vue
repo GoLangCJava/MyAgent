@@ -63,13 +63,14 @@ import { listWorkspaceFiles } from '../apis/project_api.js'
 import ChatMessage from '../components/AgentChat/ChatMessage.vue'
 import ChatInput from '../components/AgentChat/ChatInput.vue'
 import { useAgentRun } from '../composables/useAgentRun.js'
+import { genUUID } from '../utils/uuid.js'
 
 const route = useRoute()
 const router = useRouter()
 const agentStore = useAgentStore()
 const { messages, status, queuePosition, currentRunId, error, sendMessage, cancel, closeAll, setMessagesFromHistory } = useAgentRun()
 
-const threadId = ref(route.params.threadId || localStorage.getItem('thread_id') || crypto.randomUUID())
+const threadId = ref(route.params.threadId || localStorage.getItem('thread_id') || genUUID())
 const selectedAgentSlug = ref('chatbot')
 const showWorkspace = ref(true)
 const workspaceFiles = ref([])
@@ -136,7 +137,7 @@ watch(messages, () => scrollToBottom(), { deep:true })
 function clearChat(){
   messages.value=[]
   closeAll()
-  const tid=crypto.randomUUID()
+  const tid=genUUID()
   threadId.value=tid
   router.push(`/chat/${tid}`)
 }
