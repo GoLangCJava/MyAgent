@@ -1,15 +1,20 @@
 from datetime import datetime, timedelta, timezone
 from jose import jwt
-from passlib.context import CryptContext
+import bcrypt
 from deep_platform.config import settings
 
-pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+def _to_72(p: str) -> bytes:
+    # bcrypt 上限 72 字节, 超长截断 (与经典 bcrypt 语义一致, 避免新版抛 ValueError)
+    return p.encode("utf-8")[:72]
 
 def hash_password(p: str) -> str:
-    return pwd_ctx.hash(p)
+    return bcrypt.hashpw(_to_72(p), bcrypt.gensalt()).decode("utf-8")
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_ctx.verify(plain, hashed)
+    try:
+        return bcrypt.checkpw(_to_72(plain), hashed.encode("utf-8"))
+    except Exception:
+        return False
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
