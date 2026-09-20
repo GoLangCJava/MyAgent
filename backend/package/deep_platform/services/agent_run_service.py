@@ -1,9 +1,14 @@
+import logging
+from deep_platform.utils.logger import get_logger
 from datetime import datetime, timezone
 from deep_platform.services.run_queue_service import get_arq_pool
 
+logger = get_logger(__name__)
+
 async def enqueue_agent_run(run_id: str):
     pool=await get_arq_pool()
-    await pool.enqueue_job("run_agent", run_id)
+    job=await pool.enqueue_job("run_agent", run_id)
+    logger.info("[run %s] 已入 ARQ 队列 job=%s", run_id, getattr(job, "job_id", "?"))
 
 async def complete_run(db, run_id: str, output_message_id: str|None=None, error: dict|None=None):
     from sqlalchemy import select

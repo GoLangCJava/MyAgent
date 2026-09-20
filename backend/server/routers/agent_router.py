@@ -3,7 +3,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-import uuid, asyncio, json
+import uuid, asyncio, json, logging
+from deep_platform.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 from deep_platform.storage.postgres.manager import get_db, SessionLocal
 from deep_platform.storage.postgres.models import AgentRunRequest, AgentRun, Message, Agent, User
@@ -170,6 +173,7 @@ async def stream_run_events(run_id: str, after_seq: str = Query("0-0"), last_eve
         q=await db.execute(select(AgentRun).where(AgentRun.id==run_id, AgentRun.uid==current_user.id))
         if not q.scalars().first():
             raise HTTPException(status_code=404, detail="Not found")
+    logger.info("[sse] 订阅 run=%s user=%s cursor=%s", run_id, current_user.id, cursor)
 
     async def gen():
         cur=cursor
@@ -180,6 +184,7 @@ async def stream_run_events(run_id: str, after_seq: str = Query("0-0"), last_eve
                 data=json.dumps(ev["payload"], ensure_ascii=False)
                 yield f"id: {ev['seq']}\nevent: {ev['event_type']}\ndata: {data}\n\n"
                 if ev["event_type"] in ("run_completed","run_failed","run_cancelled"):
+                    logger.info("[sse] run=%s 终态推送 %s", run_id, ev["event_type"])
                     return
             async with SessionLocal() as db:
                 q=await db.execute(select(AgentRun).where(AgentRun.id==run_id))

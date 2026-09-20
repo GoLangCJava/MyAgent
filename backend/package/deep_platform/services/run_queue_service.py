@@ -1,7 +1,11 @@
 import asyncio, json, os
+import logging
+from deep_platform.utils.logger import get_logger
 from datetime import datetime, timezone
 from deep_platform.storage.redis import get_async_redis_client, create_arq_pool, close_async_redis_client
 from deep_platform.config import settings
+
+logger = get_logger(__name__)
 
 _arq_pool=None
 
@@ -63,6 +67,12 @@ async def append_run_event(run_id: str, event_type: str, payload: dict, thread_i
         pipe.xadd(key, fields, **kwargs)
         pipe.expire(key, settings.RUN_STREAM_TTL)
         eid,_=await pipe.execute()
+    extra=""
+    if event_type=="message_delta":
+        extra=f" preview={str(payload.get('delta',''))[:60]!r}"
+    elif event_type in ("run_failed",):
+        extra=f" error={str(payload.get('error',''))[:200]!r}"
+    logger.info("[stream %s] %s seq=%s%s", run_id, event_type, eid, extra)
     return str(eid)
 
 async def list_run_events(run_id: str, after_seq: str="0-0", limit: int=200):

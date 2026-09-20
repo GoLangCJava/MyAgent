@@ -1,3 +1,5 @@
+import logging
+from deep_platform.utils.logger import get_logger
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from sqlalchemy import select
@@ -5,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 from deep_platform.storage.postgres.models import AgentRunRequest, Message, Conversation
 import uuid
+
+logger = get_logger(__name__)
 
 def utcnow(): return datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -24,6 +28,7 @@ async def submit_agent_request(db: AsyncSession, inp: AgentRequestInput):
     q=await db.execute(select(AgentRunRequest).where(AgentRunRequest.request_id==inp.request_id))
     existing=q.scalars().first()
     if existing:
+        logger.info("[req %s] 幂等命中 status=%s run=%s", inp.request_id, existing.status, existing.dispatched_run_id)
         return {"request_id":existing.request_id, "status":existing.status, "run_id":existing.dispatched_run_id, "queue_position":1, "request_events_url":f"/api/agent/requests/{existing.request_id}/events"}
 
     # 确保 Conversation 存在
@@ -60,6 +65,8 @@ async def submit_agent_request(db: AsyncSession, inp: AgentRequestInput):
     if dispatched:
         from deep_platform.services.agent_run_service import enqueue_agent_run
         await enqueue_agent_run(dispatched.id)
+        logger.info("[req %s] dispatched run=%s thread=%s", req.request_id, dispatched.id, inp.thread_id)
         return {"request_id":req.request_id, "status":"dispatched", "run_id":dispatched.id, "stream_url":f"/api/agent/runs/{dispatched.id}/events", "request_events_url":f"/api/agent/requests/{req.request_id}/events", "conversation_id":conv.id}
     else:
+        logger.info("[req %s] queued (有活跃 run, 等待轮到)", req.request_id)
         return {"request_id":req.request_id, "status":"queued", "run_id":None, "queue_position":1, "request_events_url":f"/api/agent/requests/{req.request_id}/events", "conversation_id":conv.id}

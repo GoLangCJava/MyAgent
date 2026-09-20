@@ -1,6 +1,10 @@
 import os
+import logging
+from deep_platform.utils.logger import get_logger
 from deep_platform.config import settings
 from deep_platform.agents.tools.builtin import ALL_TOOLS
+
+logger = get_logger(__name__)
 
 # 兼容 SiliconFlow / Qwen / OpenAI 的 provider 别名, 全部走 OpenAI 兼容接口
 OPENAI_COMPATIBLE_PROVIDERS = {"openai", "", "siliconflow", "silicon", "qwen", "deepseek", "moonshot", "zhipu", "yi"}
@@ -37,8 +41,11 @@ def get_model(model_spec: str | None = None):
             kwargs["api_key"] = api_key
         if base_url:
             kwargs["base_url"] = base_url
+        key_info = f"****{api_key[-4:]}(len={len(api_key)})" if api_key else "(缺失! 调用必失败)"
+        logger.info("[model] spec=%s provider=%s model=%s base_url=%s api_key=%s", spec, provider, model_name, base_url or "(官方默认)", key_info)
         return ChatOpenAI(**kwargs)
     except Exception as e:
+        logger.exception("[model] 初始化失败 spec=%s, 降级 mock", spec)
         print(f"Model init failed {e}, fallback mock")
         from langchain_core.language_models.fake_chat_models import FakeListChatModel
         return FakeListChatModel(responses=[f"Mock response for {spec}: I am a deep agent. I will plan with todo, then use tools."])
@@ -80,13 +87,19 @@ def create_deep_agent_for_run(agent_slug: str, system_prompt: str|None=None, mod
         )
         if backend:
             kwargs["backend"]=backend
+        logger.info("[agent] 构建 slug=%s thread=%s model_spec=%s backend=%s subagents=%s",
+                    agent_slug, thread_id, model_spec, type(backend).__name__ if backend else None,
+                    [s["name"] for s in kwargs["subagents"]])
         agent=create_deep_agent(**kwargs)
+        logger.info("[agent] 构建成功: %s", type(agent).__name__)
         return agent
     except ImportError:
+        logger.warning("[agent] deepagents 未安装, 降级 langchain create_agent")
         print("deepagents not installed, fallback to langchain create_agent")
         from langchain.agents import create_agent
         return create_agent(model, tools=ALL_TOOLS, system_prompt=system_prompt or "You are helpful assistant")
     except Exception as e:
+        logger.warning("[agent] create_deep_agent 失败(%s), 降级 langchain create_agent", e)
         print(f"create_deep_agent failed {e}, fallback")
         from langchain.agents import create_agent
         return create_agent(model, tools=ALL_TOOLS, system_prompt=system_prompt or "You are helpful assistant")

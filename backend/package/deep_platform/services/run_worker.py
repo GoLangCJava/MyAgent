@@ -1,4 +1,6 @@
 import asyncio, uuid, os
+import logging
+from deep_platform.utils.logger import get_logger
 from datetime import datetime, timezone
 from arq import func
 from deep_platform.storage.postgres.manager import SessionLocal
@@ -12,12 +14,15 @@ from sqlalchemy import select
 
 WORKER_ID=f"worker-{uuid.uuid4().hex[:8]}"
 HEARTBEAT=30
+logger = get_logger(__name__)
 
 async def run_agent(ctx, run_id: str):
     print(f"[{WORKER_ID}] run {run_id} start")
+    logger.info("[run %s] worker=%s 领到任务", run_id, WORKER_ID)
     async with SessionLocal() as db:
         ok=await try_acquire_run_lease(db, run_id, WORKER_ID)
         if not ok:
+            logger.warning("[run %s] lease 获取失败 (已有 worker 在跑或状态不对), 跳过", run_id)
             print(f"[{WORKER_ID}] lease not acquired {run_id}")
             return
 
@@ -25,7 +30,9 @@ async def run_agent(ctx, run_id: str):
     async with SessionLocal() as db:
         q=await db.execute(select(AgentRun).where(AgentRun.id==run_id))
         run=q.scalars().first()
-        if not run: return
+        if not run:
+            logger.error("[run %s] DB 中找不到该 run, 放弃", run_id)
+            return
         uid, agent_slug, thread_id, request_id, conv_id = run.uid, run.agent_slug, run.thread_id, run.request_id, run.conversation_id
         q2=await db.execute(select(Message).where(Message.request_id==request_id, Message.role=="user"))
         umsg=q2.scalars().first()
@@ -41,6 +48,7 @@ async def run_agent(ctx, run_id: str):
             q5=await db.execute(select(Agent).where(Agent.slug==agent_slug))
             ag=q5.scalars().first()
             system_prompt=ag.system_prompt if ag else None
+    logger.info("[run %s] 上下文 thread=%s agent=%s model_spec=%s query_len=%d", run_id, thread_id, agent_slug, model_spec, len(query))
 
     cancel_event=asyncio.Event()
     async def watch_cancel():
@@ -61,12 +69,17 @@ async def run_agent(ctx, run_id: str):
         await append_run_event(run_id, "run_started", {"run_id":run_id, "thread_id":thread_id}, thread_id)
 
         agent=create_deep_agent_for_run(agent_slug, system_prompt=system_prompt, model_spec=model_spec, thread_id=thread_id)
+        logger.info("[run %s] agent 构建完成, 开始调用模型...", run_id)
 
         output_text=""
+        msg_n=0; upd_n=0; first_delta_logged=False
+        import time as _time
+        _t0=_time.time()
         # 兼容 deepagents 和 langchain agent 的流式
         try:
             async for event in agent.astream({"messages":[{"role":"user","content":query}]}, stream_mode=["messages","updates"]):
                 if cancel_event.is_set():
+                    logger.info("[run %s] 用户取消", run_id)
                     await append_run_event(run_id, "run_cancelled", {"reason":"user_cancel"}, thread_id)
                     async with SessionLocal() as db:
                         q=await db.execute(select(AgentRun).where(AgentRun.id==run_id).with_for_update())
@@ -98,15 +111,28 @@ async def run_agent(ctx, run_id: str):
                                 txt=str(content)
                             if txt:
                                 output_text+=txt
+                                msg_n+=1
+                                if not first_delta_logged:
+                                    first_delta_logged=True
+                                    logger.info("[run %s] 首个 delta 到达 (%.1fs), 累计输出 %d 字符", run_id, _time.time()-_t0, len(output_text))
                                 await append_run_event(run_id, "message_delta", {"delta":txt}, thread_id)
                     elif mode=="updates":
                         # 工具调用等
+                        upd_n+=1
                         await append_run_event(run_id, "step_update", {"update":str(data)[:2000]}, thread_id)
+                    else:
+                        logger.warning("[run %s] 未知 stream mode=%r, 事件已忽略", run_id, mode)
                 except Exception as e:
+                    logger.warning("[run %s] 事件解析失败: %s (事件预览: %r)", run_id, e, str(event)[:300])
                     print(f"event parse error {e}")
+
+            logger.info("[run %s] 模型流结束 (%.1fs): deltas=%d updates=%d output_len=%d", run_id, _time.time()-_t0, msg_n, upd_n, len(output_text))
+            if msg_n==0 and upd_n==0:
+                logger.warning("[run %s] 模型一次事件都没吐! 检查 Key/网络/模型名", run_id)
 
         except Exception as e:
             # fallback: invoke
+            logger.warning("[run %s] astream 失败转 invoke: %s", run_id, e)
             print(f"astream failed {e}, fallback invoke")
             try:
                 result=await agent.ainvoke({"messages":[{"role":"user","content":query}]})
@@ -122,6 +148,7 @@ async def run_agent(ctx, run_id: str):
                     output_text=str(result)
                     await append_run_event(run_id, "message_delta", {"delta":output_text}, thread_id)
             except Exception as e2:
+                logger.error("[run %s] invoke 也失败了: %s", run_id, e2)
                 print(f"invoke also failed {e2}")
                 raise e
 
@@ -133,6 +160,7 @@ async def run_agent(ctx, run_id: str):
             await db.flush()
             await complete_run(db, run_id, output_message_id=out_id)
             await append_run_event(run_id, "run_completed", {"run_id":run_id, "output_message_id":out_id}, thread_id)
+            logger.info("[run %s] 完成: output_len=%d msg=%s", run_id, len(output_text), out_id)
 
         # 链式派发下一请求
         async with SessionLocal() as db:
@@ -143,6 +171,7 @@ async def run_agent(ctx, run_id: str):
                 await enqueue_agent_run(dispatched.id)
 
     except Exception as e:
+        logger.exception("[run %s] 失败: %s", run_id, e)
         print(f"[{WORKER_ID}] run {run_id} failed {e}")
         import traceback; traceback.print_exc()
         async with SessionLocal() as db:

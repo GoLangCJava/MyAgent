@@ -100,12 +100,15 @@ export function useAgentRun() {
     const request_id = genUUID()
     currentRequestId.value = request_id
 
+    console.log('[chat] 发送', { agent_slug, thread_id, query_len: query.length, model_spec, request_id })
     let res
     try {
       res = await createAgentRun({ agent_slug, thread_id, query, model_spec, request_id })
+      console.log('[chat] 建单响应', res)
     } catch (e) {
       status.value = 'failed'
       error.value = e?.response?.data?.detail || e.message
+      console.error('[chat] 建单失败', error.value)
       return
     }
 
@@ -147,11 +150,14 @@ export function useAgentRun() {
         if (type === 'queued') {
           queuePosition.value = data.position
         } else if (type === 'run_created') {
+          console.log('[chat] run 已创建, 切 run 流:', data.run_id)
           if (requestCtrl === ctrl) { try { ctrl.abort() } catch {} ; requestCtrl = null }
           startRunStream(data.run_id)
         } else if (type === 'cancelled' || type === 'rejected' || type === 'failed') {
+          console.log('[chat] request 终态:', type)
           status.value = type === 'cancelled' ? 'cancelled' : 'failed'
         } else if (type === 'error') {
+          console.error('[chat] request 流错误:', data.message)
           status.value = 'failed'
           error.value = data.message || 'failed'
         }
@@ -198,22 +204,28 @@ export function useAgentRun() {
       return
     }
 
+    let gotDelta = false
+    console.log('[chat] 订阅 run 流:', run_id)
     try {
       await readSseStream(res, (type, data, eventId) => {
         const inner = data.payload || data
         if (type === 'message_delta') {
           const delta = inner.delta || inner?.payload?.delta || ''
           if (delta) {
+            if (!gotDelta) { gotDelta = true; console.log('[chat] 首个 delta 到达') }
             messages.value[idx].content += delta
           }
         } else if (type === 'step_update') {
           // 可选: 展示工具调用
         } else if (type === 'run_completed') {
+          console.log('[chat] run 完成, 输出长度:', messages.value[idx].content.length)
           status.value = 'completed'
         } else if (type === 'run_failed') {
+          console.error('[chat] run 失败:', inner.error || inner?.payload?.error)
           status.value = 'failed'
           error.value = inner.error || inner?.payload?.error || 'failed'
         } else if (type === 'run_cancelled') {
+          console.log('[chat] run 已取消')
           status.value = 'cancelled'
         }
       })
