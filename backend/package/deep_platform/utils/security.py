@@ -1,19 +1,20 @@
 from datetime import datetime, timedelta, timezone
 from jose import jwt
-import bcrypt
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHash, VerifyMismatchError, VerificationError
 from deep_platform.config import settings
 
-def _to_72(p: str) -> bytes:
-    # bcrypt 上限 72 字节, 超长截断 (与经典 bcrypt 语义一致, 避免新版抛 ValueError)
-    return p.encode("utf-8")[:72]
+_ph = PasswordHasher()
 
 def hash_password(p: str) -> str:
-    return bcrypt.hashpw(_to_72(p), bcrypt.gensalt()).decode("utf-8")
+    return _ph.hash(p)
 
 def verify_password(plain: str, hashed: str) -> bool:
+    if not hashed or not hashed.startswith("$argon2"):
+        return False
     try:
-        return bcrypt.checkpw(_to_72(plain), hashed.encode("utf-8"))
-    except Exception:
+        return _ph.verify(hashed, plain)
+    except (InvalidHash, VerifyMismatchError, VerificationError):
         return False
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None):

@@ -1,6 +1,74 @@
 import { ref } from 'vue'
 import { createAgentRun, cancelRun as cancelRunApi } from '../apis/agent_api.js'
 
+function authHeaders() {
+  const token = localStorage.getItem('token') || ''
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+function handleUnauthorized(res) {
+  // 与 axios 拦截器保持一致: 401 则清 token 并回登录页
+  if (res.status === 401) {
+    localStorage.removeItem('token')
+    localStorage.removeItem('user')
+    if (location.pathname !== '/login') {
+      location.href = '/login'
+    }
+    return true
+  }
+  return false
+}
+
+// SSE 帧解析 (参考 Yuxi 的 processRunSseResponse)
+async function readSseStream(response, onEvent) {
+  if (!response || !response.body) return
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let eventType = 'message'
+  let eventId = null
+  let dataLines = []
+
+  const dispatch = () => {
+    if (dataLines.length === 0) return
+    const dataText = dataLines.join('\n')
+    try {
+      onEvent(eventType, JSON.parse(dataText), eventId)
+    } catch {}
+  }
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+      for (const rawLine of lines) {
+        const line = rawLine.replace(/\r$/, '')
+        if (!line) {
+          dispatch()
+          eventType = 'message'
+          eventId = null
+          dataLines = []
+          continue
+        }
+        if (line.startsWith(':')) continue // 心跳注释
+        if (line.startsWith('event:')) {
+          eventType = line.slice(6).trim() || 'message'
+        } else if (line.startsWith('data:')) {
+          dataLines.push(line.slice(5).trimStart())
+        } else if (line.startsWith('id:')) {
+          eventId = line.slice(3).trim()
+        }
+      }
+    }
+    dispatch()
+  } finally {
+    try { reader.releaseLock() } catch {}
+  }
+}
+
 export function useAgentRun() {
   const messages = ref([])
   const status = ref('idle')
@@ -9,12 +77,12 @@ export function useAgentRun() {
   const currentRequestId = ref(null)
   const error = ref(null)
 
-  let requestES = null
-  let runES = null
+  let requestCtrl = null
+  let runCtrl = null
 
   function closeAll() {
-    if (requestES) { requestES.close(); requestES = null }
-    if (runES) { runES.close(); runES = null }
+    if (requestCtrl) { try { requestCtrl.abort() } catch {} ; requestCtrl = null }
+    if (runCtrl) { try { runCtrl.abort() } catch {} ; runCtrl = null }
   }
 
   function setMessagesFromHistory(historyMessages) {
@@ -47,45 +115,57 @@ export function useAgentRun() {
     }
   }
 
-  function sseUrl(path) {
-    // EventSource 发不出 Authorization 头, token 走 query 参数 (后端 get_current_user_sse 支持)
-    const token = localStorage.getItem('token') || ''
-    return `${path}?token=${encodeURIComponent(token)}`
-  }
-
-  function startRequestStream(request_id) {
+  async function startRequestStream(request_id) {
+    closeAll()
     status.value = 'queued'
-    const url = sseUrl(`/api/agent/requests/${request_id}/events`)
-    requestES = new EventSource(url)
+    const ctrl = new AbortController()
+    requestCtrl = ctrl
 
-    requestES.addEventListener('queued', (e) => {
-      try {
-        const data = JSON.parse(e.data)
-        queuePosition.value = data.position
-      } catch {}
-    })
+    let res
+    try {
+      res = await fetch(`/api/agent/requests/${request_id}/events`, {
+        headers: authHeaders(),
+        signal: ctrl.signal
+      })
+    } catch (e) {
+      if (e.name === 'AbortError') return
+      status.value = 'failed'
+      error.value = 'SSE 连接失败'
+      return
+    }
+    if (!res.ok) {
+      if (!handleUnauthorized(res)) {
+        status.value = 'failed'
+        error.value = `SSE 连接失败: ${res.status}`
+      }
+      return
+    }
 
-    requestES.addEventListener('run_created', (e) => {
-      try {
-        const data = JSON.parse(e.data)
-        requestES.close()
-        requestES = null
-        startRunStream(data.run_id)
-      } catch {}
-    })
-
-    requestES.addEventListener('cancelled', () => {
-      status.value = 'cancelled'
-      requestES?.close()
-    })
-
-    requestES.onerror = () => {
-      // EventSource auto reconnect
+    try {
+      await readSseStream(res, (type, data) => {
+        if (type === 'queued') {
+          queuePosition.value = data.position
+        } else if (type === 'run_created') {
+          if (requestCtrl === ctrl) { try { ctrl.abort() } catch {} ; requestCtrl = null }
+          startRunStream(data.run_id)
+        } else if (type === 'cancelled' || type === 'rejected' || type === 'failed') {
+          status.value = type === 'cancelled' ? 'cancelled' : 'failed'
+        } else if (type === 'error') {
+          status.value = 'failed'
+          error.value = data.message || 'failed'
+        }
+      })
+    } catch (e) {
+      if (e.name !== 'AbortError') {
+        status.value = 'failed'
+        error.value = 'SSE 读取中断'
+      }
     }
   }
 
-  function startRunStream(run_id) {
-    if (requestES) { requestES.close(); requestES = null }
+  async function startRunStream(run_id) {
+    if (requestCtrl) { try { requestCtrl.abort() } catch {} ; requestCtrl = null }
+    if (runCtrl) { try { runCtrl.abort() } catch {} ; runCtrl = null }
     currentRunId.value = run_id
     status.value = 'running'
     queuePosition.value = null
@@ -94,52 +174,55 @@ export function useAgentRun() {
     messages.value.push(assistantMsg)
     const idx = messages.value.length - 1
 
-    const url = sseUrl(`/api/agent/runs/${run_id}/events`)
-    runES = new EventSource(url)
-    let lastSeq = '0-0'
+    const ctrl = new AbortController()
+    runCtrl = ctrl
 
-    runES.addEventListener('message_delta', (e) => {
-      try {
-        const payload = JSON.parse(e.data)
-        // payload is envelope {payload: {delta}}
-        const inner = payload.payload || payload
-        const delta = inner.delta || inner?.payload?.delta || ''
-        if (delta) {
-          messages.value[idx].content += delta
-        }
-        lastSeq = e.lastEventId || lastSeq
-      } catch {}
-    })
-
-    runES.addEventListener('step_update', (e) => {
-      // 可选: 展示工具调用
-      try {
-        const payload = JSON.parse(e.data)
-        // console.log('step', payload)
-      } catch {}
-    })
-
-    runES.addEventListener('run_completed', () => {
-      status.value = 'completed'
-      runES?.close()
-      runES = null
-    })
-
-    runES.addEventListener('run_failed', (e) => {
+    let res
+    try {
+      res = await fetch(`/api/agent/runs/${run_id}/events`, {
+        headers: authHeaders(),
+        signal: ctrl.signal
+      })
+    } catch (e) {
+      if (e.name === 'AbortError') return
       status.value = 'failed'
-      try { error.value = JSON.parse(e.data).payload?.error || 'failed' } catch { error.value = 'failed' }
-      runES?.close()
-      runES = null
-    })
+      error.value = 'SSE 连接失败'
+      return
+    }
+    if (!res.ok) {
+      if (!handleUnauthorized(res)) {
+        status.value = 'failed'
+        error.value = `SSE 连接失败: ${res.status}`
+      }
+      return
+    }
 
-    runES.addEventListener('run_cancelled', () => {
-      status.value = 'cancelled'
-      runES?.close()
-      runES = null
-    })
-
-    runES.onerror = () => {
-      // 可实现带 Last-Event-ID 重连
+    try {
+      await readSseStream(res, (type, data, eventId) => {
+        const inner = data.payload || data
+        if (type === 'message_delta') {
+          const delta = inner.delta || inner?.payload?.delta || ''
+          if (delta) {
+            messages.value[idx].content += delta
+          }
+        } else if (type === 'step_update') {
+          // 可选: 展示工具调用
+        } else if (type === 'run_completed') {
+          status.value = 'completed'
+        } else if (type === 'run_failed') {
+          status.value = 'failed'
+          error.value = inner.error || inner?.payload?.error || 'failed'
+        } else if (type === 'run_cancelled') {
+          status.value = 'cancelled'
+        }
+      })
+    } catch (e) {
+      if (e.name !== 'AbortError') {
+        status.value = 'failed'
+        error.value = 'SSE 读取中断'
+      }
+    } finally {
+      if (runCtrl === ctrl) runCtrl = null
     }
   }
 

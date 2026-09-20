@@ -10,7 +10,7 @@ from deep_platform.storage.postgres.models import AgentRunRequest, AgentRun, Mes
 from deep_platform.services.agent_request_service import AgentRequestInput, submit_agent_request
 from deep_platform.services.run_queue_service import list_run_events, publish_cancel_signal
 from deep_platform.services.agent_request_queue_service import get_queue_position
-from server.utils.auth import get_current_user, get_current_user_sse
+from server.utils.auth import get_current_user
 
 agent_router = APIRouter()
 
@@ -115,7 +115,7 @@ async def get_request(request_id: str, current_user: User = Depends(get_current_
     return {"request_id":r.request_id, "status":r.status, "run_id":r.dispatched_run_id, "thread_id":r.thread_id, "created_at":r.created_at}
 
 @agent_router.get("/requests/{request_id}/events")
-async def stream_request_events(request_id: str, current_user: User = Depends(get_current_user_sse)):
+async def stream_request_events(request_id: str, current_user: User = Depends(get_current_user)):
     async def gen():
         last_pos=-1
         while True:
@@ -163,7 +163,7 @@ async def cancel_run(run_id: str, current_user: User = Depends(get_current_user)
     return {"run_id":run_id, "status":"cancel_requested"}
 
 @agent_router.get("/runs/{run_id}/events")
-async def stream_run_events(run_id: str, after_seq: str = Query("0-0"), last_event_id: str | None = Header(default=None, alias="Last-Event-ID"), current_user: User = Depends(get_current_user_sse)):
+async def stream_run_events(run_id: str, after_seq: str = Query("0-0"), last_event_id: str | None = Header(default=None, alias="Last-Event-ID"), current_user: User = Depends(get_current_user)):
     cursor=last_event_id or after_seq
     # 验证归属
     async with SessionLocal() as db:
