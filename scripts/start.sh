@@ -16,6 +16,10 @@ mkdir -p logs
 
 # 加载 .env (代码不读 dotenv 文件, 必须导出到环境)
 set -a; source .env; set +a
+# Key 缺失告警 (模型调用会失败, 但服务仍可启动)
+if [ -z "${SILICONFLOW_API_KEY:-}" ] && [ -z "${OPENAI_API_KEY:-}" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+  echo "⚠️  警告: .env 里没有任何模型 API Key, 聊天调用将失败, 请先编辑 .env 填入 SILICONFLOW_API_KEY"
+fi
 export PYTHONPATH="$ROOT/backend:$ROOT/backend/package"
 export VITE_API_BASE="http://localhost:${API_PORT}"
 
